@@ -12,6 +12,7 @@ const CONTENT_TYPES: Record<string, string> = {
   ".mov": "video/quicktime",
   ".m4v": "video/x-m4v",
   ".jpg": "image/jpeg",
+  ".gif": "image/gif",
 };
 const contentTypeFor = (name: string) =>
   CONTENT_TYPES[path.extname(name).toLowerCase()] ?? "application/octet-stream";

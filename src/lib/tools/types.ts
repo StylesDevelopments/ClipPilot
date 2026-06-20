@@ -1,7 +1,14 @@
 // Pure types + shared shapes for the tool system.
 // This file must stay free of Node-only imports so it can be used on the client.
 
-export type ToolId = "stabilise" | "compress" | "convert" | "trim" | "thumbnail";
+export type ToolId =
+  | "stabilise"
+  | "compress"
+  | "convert"
+  | "trim"
+  | "rotate"
+  | "gif"
+  | "thumbnail";
 
 export type OutputKind = "video" | "image";
 

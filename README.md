@@ -25,6 +25,8 @@ Upload  →  Choose a tool  →  Process locally  →  Preview & download
 | **Compress** | Re-encode at a smaller bitrate, with optional downscale to 1080/720/480p. |
 | **Convert to MP4** | Turn `.mov` / `.m4v` into a universal H.264 + AAC MP4. |
 | **Trim** | Fast, lossless cut to just the part you need. |
+| **Rotate** | Fix sideways / upside-down clips (rotate or flip). Audio kept. |
+| **GIF** | Turn a clip (or trimmed section) into an optimised animated GIF. |
 | **Thumbnail** | Grab a single frame as a JPEG. |
 
 Plus:

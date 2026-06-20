@@ -6,6 +6,8 @@ describe("tool catalog", () => {
     expect(TOOLS.map((t) => t.id).sort()).toEqual([
       "compress",
       "convert",
+      "gif",
+      "rotate",
       "stabilise",
       "thumbnail",
       "trim",

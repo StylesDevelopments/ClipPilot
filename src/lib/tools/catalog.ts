@@ -166,6 +166,83 @@ export const TOOLS: ToolMeta[] = [
     ],
   },
   {
+    id: "rotate",
+    label: "Rotate",
+    tagline: "Fix sideways or upside-down footage",
+    description: "Rotate or flip the video and re-encode. Original audio is kept.",
+    outputKind: "video",
+    outputExt: "mp4",
+    fields: [
+      {
+        key: "direction",
+        label: "Direction",
+        type: "select",
+        default: "90cw",
+        choices: [
+          { value: "90cw", label: "90° clockwise" },
+          { value: "90ccw", label: "90° anticlockwise" },
+          { value: "180", label: "180°" },
+          { value: "hflip", label: "Flip horizontally" },
+          { value: "vflip", label: "Flip vertically" },
+        ],
+      },
+      {
+        key: "removeAudio",
+        label: "Remove audio",
+        type: "toggle",
+        default: false,
+      },
+    ],
+  },
+  {
+    id: "gif",
+    label: "GIF",
+    tagline: "Make a shareable animated GIF",
+    description:
+      "Convert a clip (or a trimmed section) into an optimised GIF using a generated colour palette.",
+    outputKind: "image",
+    outputExt: "gif",
+    fields: [
+      {
+        key: "fps",
+        label: "Frame rate",
+        type: "select",
+        default: "12",
+        choices: [
+          { value: "8", label: "8 fps – smallest" },
+          { value: "12", label: "12 fps" },
+          { value: "15", label: "15 fps – smoothest" },
+        ],
+      },
+      {
+        key: "width",
+        label: "Width",
+        type: "select",
+        default: "480",
+        choices: [
+          { value: "320", label: "320px" },
+          { value: "480", label: "480px" },
+          { value: "640", label: "640px" },
+        ],
+      },
+      {
+        key: "trimStart",
+        label: "From (optional)",
+        type: "text",
+        default: "",
+        placeholder: "e.g. 0:02",
+      },
+      {
+        key: "trimEnd",
+        label: "To (optional)",
+        type: "text",
+        default: "",
+        placeholder: "e.g. 0:06",
+        help: "GIFs are best kept short.",
+      },
+    ],
+  },
+  {
     id: "thumbnail",
     label: "Thumbnail",
     tagline: "Grab a single frame as an image",

@@ -240,6 +240,103 @@ function buildTrim(ctx: PlanContext): ProcessPlan {
   };
 }
 
+const ROTATE_FILTERS: Record<string, string> = {
+  "90cw": "transpose=1",
+  "90ccw": "transpose=2",
+  "180": "transpose=1,transpose=1",
+  hflip: "hflip",
+  vflip: "vflip",
+};
+
+function buildRotate(ctx: PlanContext): ProcessPlan {
+  const filter = ROTATE_FILTERS[String(ctx.options.direction)] ?? ROTATE_FILTERS["90cw"];
+
+  const args = [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-stats",
+    "-y",
+    "-i",
+    ctx.inputPath,
+    "-vf",
+    filter,
+    "-map",
+    "0:v:0",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "medium",
+    "-crf",
+    "20",
+    "-pix_fmt",
+    "yuv420p",
+    ...audioArgs(Boolean(ctx.options.removeAudio)),
+    "-movflags",
+    "+faststart",
+    ctx.outputPath,
+  ];
+
+  return {
+    steps: [{ label: "Rotating", args, weight: 1, trackProgress: true }],
+    outputPath: ctx.outputPath,
+    outputName: ctx.outputName,
+    outputKind: "video",
+    cleanup: [],
+  };
+}
+
+function buildGif(ctx: PlanContext): ProcessPlan {
+  const fps = Number.parseInt(String(ctx.options.fps ?? "12"), 10) || 12;
+  const width = Number.parseInt(String(ctx.options.width ?? "480"), 10) || 480;
+  const trim = resolveTrim(ctx.options, ctx.durationSec);
+  const palette = `${ctx.tmpPrefix}-palette.png`;
+  const scale = `fps=${fps},scale=${width}:-1:flags=lanczos`;
+
+  // Two-pass palette gives far better-looking, smaller GIFs than a naive convert.
+  const paletteArgs = [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-y",
+    ...trim.pre,
+    "-i",
+    ctx.inputPath,
+    ...trim.post,
+    "-vf",
+    `${scale},palettegen`,
+    palette,
+  ];
+
+  const gifArgs = [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-stats",
+    "-y",
+    ...trim.pre,
+    "-i",
+    ctx.inputPath,
+    ...trim.post,
+    "-i",
+    palette,
+    "-lavfi",
+    `${scale}[x];[x][1:v]paletteuse`,
+    ctx.outputPath,
+  ];
+
+  return {
+    steps: [
+      { label: "Building colour palette", args: paletteArgs, weight: 1, trackProgress: false },
+      { label: "Rendering GIF", args: gifArgs, weight: 1.5, trackProgress: true },
+    ],
+    outputPath: ctx.outputPath,
+    outputName: ctx.outputName,
+    outputKind: "image",
+    cleanup: [palette],
+  };
+}
+
 function buildThumbnail(ctx: PlanContext): ProcessPlan {
   const time = parseTimecode(String(ctx.options.time ?? "1"));
   const at = Number.isFinite(time) && time >= 0 ? time : 0;
@@ -274,6 +371,8 @@ const BUILDERS: Record<ToolId, (ctx: PlanContext) => ProcessPlan> = {
   compress: buildCompress,
   convert: buildConvert,
   trim: buildTrim,
+  rotate: buildRotate,
+  gif: buildGif,
   thumbnail: buildThumbnail,
 };
 

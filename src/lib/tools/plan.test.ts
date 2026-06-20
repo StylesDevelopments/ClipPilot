@@ -73,6 +73,31 @@ describe("buildPlan: thumbnail", () => {
   });
 });
 
+describe("buildPlan: rotate", () => {
+  it("maps direction to the right filter", () => {
+    const tool = getTool("rotate")!;
+    const cw = buildPlan("rotate", ctx({ options: withDefaults(tool, { direction: "90cw" }) }));
+    expect(cw.steps[0].args.join(" ")).toContain("transpose=1");
+
+    const flip = buildPlan("rotate", ctx({ options: withDefaults(tool, { direction: "hflip" }) }));
+    expect(flip.steps[0].args).toContain("hflip");
+  });
+});
+
+describe("buildPlan: gif", () => {
+  it("builds a two-pass palette plan", () => {
+    const tool = getTool("gif")!;
+    const plan = buildPlan("gif", ctx({ options: withDefaults(tool, { fps: "15", width: "320" }) }));
+    expect(plan.steps).toHaveLength(2);
+    expect(plan.steps[0].args.join(" ")).toContain("palettegen");
+    expect(plan.steps[1].args.join(" ")).toContain("paletteuse");
+    expect(plan.steps[1].args.join(" ")).toContain("fps=15");
+    expect(plan.steps[1].args.join(" ")).toContain("scale=320");
+    expect(plan.outputKind).toBe("image");
+    expect(plan.cleanup[0]).toContain("palette");
+  });
+});
+
 describe("buildPlan: compress", () => {
   it("adds a scale filter when downscaling", () => {
     const tool = getTool("compress")!;
