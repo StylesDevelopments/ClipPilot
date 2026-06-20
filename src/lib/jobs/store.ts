@@ -1,46 +1,41 @@
 import { config } from "../config";
-import { removeIfExists, resolveInScope } from "../storage";
+import { mediaStore } from "../media";
+import type { JobStoreBackend } from "./backend";
+import { MemoryJobStore } from "./memory";
+import { SupabaseJobStore } from "./supabaseJobs";
 import type { Job } from "./types";
 
 /**
- * In-memory job registry. This is intentionally simple: ClipPilot is a
- * single-process, self-hosted app, so a Map is plenty for the MVP. Job files
- * live on disk; this map only tracks live status. If you later run multiple
- * instances, swap this module for Redis/SQLite without touching callers.
- *
- * A module-level singleton survives hot-reloads in dev via globalThis.
+ * Job registry: a persistence backend (in-memory or Supabase Postgres) plus an
+ * in-process map of AbortControllers for live cancellation, and a periodic
+ * sweeper that removes expired finished jobs and their files.
  */
-const globalForStore = globalThis as unknown as {
-  __clippilotJobs?: Map<string, Job>;
+const backend: JobStoreBackend =
+  config.jobsBackend === "supabase" ? new SupabaseJobStore() : new MemoryJobStore();
+
+const globalForJobs = globalThis as unknown as {
   __clippilotControllers?: Map<string, AbortController>;
   __clippilotSweeper?: NodeJS.Timeout;
 };
 
-const jobs: Map<string, Job> =
-  globalForStore.__clippilotJobs ?? (globalForStore.__clippilotJobs = new Map());
-
 const controllers: Map<string, AbortController> =
-  globalForStore.__clippilotControllers ??
-  (globalForStore.__clippilotControllers = new Map());
+  globalForJobs.__clippilotControllers ??
+  (globalForJobs.__clippilotControllers = new Map());
 
-export function putJob(job: Job): void {
-  jobs.set(job.id, job);
+export async function putJob(job: Job): Promise<void> {
+  await backend.put(job);
 }
 
-export function getJob(id: string): Job | undefined {
-  return jobs.get(id);
+export async function getJob(id: string): Promise<Job | undefined> {
+  return backend.get(id);
 }
 
-export function updateJob(id: string, patch: Partial<Job>): Job | undefined {
-  const existing = jobs.get(id);
-  if (!existing) return undefined;
-  const next = { ...existing, ...patch, updatedAt: Date.now() };
-  jobs.set(id, next);
-  return next;
+export async function updateJob(id: string, patch: Partial<Job>): Promise<Job | undefined> {
+  return backend.update(id, patch);
 }
 
-export function listJobs(): Job[] {
-  return [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt);
+export async function listJobs(): Promise<Job[]> {
+  return backend.list();
 }
 
 export function registerController(id: string, controller: AbortController): void {
@@ -58,43 +53,42 @@ export function clearController(id: string): void {
   controllers.delete(id);
 }
 
-/** Remove a job's records and its files from disk. */
+/** Remove a job's record and its files. */
 export async function deleteJob(id: string): Promise<boolean> {
-  const job = jobs.get(id);
+  const job = await backend.get(id);
   if (!job) return false;
   abortJob(id);
   clearController(id);
 
-  await removeIfExists(resolveInScope(job.input.scope, job.input.name));
+  await mediaStore.remove(job.input.scope, job.input.name).catch(() => {});
   if (job.output) {
-    await removeIfExists(resolveInScope(job.output.scope, job.output.name));
+    await mediaStore.remove(job.output.scope, job.output.name).catch(() => {});
   }
-  jobs.delete(id);
+  await backend.remove(id);
   return true;
 }
 
-/**
- * Periodically drop finished jobs that are older than the TTL. Files are
- * removed too. The sweeper is started lazily and only once.
- */
+/** Periodically drop finished jobs older than the TTL (and their files). */
 export function startSweeper(): void {
   if (config.jobTtlMinutes <= 0) return;
-  if (globalForStore.__clippilotSweeper) return;
+  if (globalForJobs.__clippilotSweeper) return;
 
   const intervalMs = 5 * 60 * 1000;
   const ttlMs = config.jobTtlMinutes * 60 * 1000;
 
-  globalForStore.__clippilotSweeper = setInterval(() => {
-    const now = Date.now();
-    for (const job of jobs.values()) {
-      const finished =
-        job.status === "done" || job.status === "error" || job.status === "cancelled";
-      if (finished && now - job.updatedAt > ttlMs) {
-        void deleteJob(job.id);
+  globalForJobs.__clippilotSweeper = setInterval(() => {
+    void (async () => {
+      const now = Date.now();
+      const jobs = await listJobs().catch(() => []);
+      for (const job of jobs) {
+        const finished =
+          job.status === "done" || job.status === "error" || job.status === "cancelled";
+        if (finished && now - job.updatedAt > ttlMs) {
+          await deleteJob(job.id).catch(() => {});
+        }
       }
-    }
+    })();
   }, intervalMs);
 
-  // Don't keep the event loop alive purely for the sweeper.
-  globalForStore.__clippilotSweeper.unref?.();
+  globalForJobs.__clippilotSweeper.unref?.();
 }

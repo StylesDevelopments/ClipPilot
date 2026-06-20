@@ -2,7 +2,8 @@ import { NextRequest } from "next/server";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
-import { getExtension, resolveInScope, type StorageScope } from "@/lib/storage";
+import { getExtension, sanitizeFilename } from "@/lib/storage";
+import { mediaStore, type StorageScope } from "@/lib/media";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,13 +27,23 @@ export async function GET(req: NextRequest, { params }: Params) {
     return new Response("Not found", { status: 404 });
   }
 
-  let filePath: string;
+  const name = sanitizeFilename(params.name);
+  const download = req.nextUrl.searchParams.get("download") === "1";
+
+  let plan;
   try {
-    filePath = resolveInScope(scope as StorageScope, params.name);
+    plan = await mediaStore.serve(scope as StorageScope, name, download);
   } catch {
-    return new Response("Bad request", { status: 400 });
+    return new Response("Not found", { status: 404 });
   }
 
+  // Supabase backend: hand off to a signed URL (supports range via the CDN).
+  if (plan.redirectUrl) {
+    return Response.redirect(plan.redirectUrl, 302);
+  }
+
+  // Local backend: stream from disk with range support.
+  const filePath = plan.localPath!;
   let fileStat;
   try {
     fileStat = await stat(filePath);
@@ -41,16 +52,14 @@ export async function GET(req: NextRequest, { params }: Params) {
   }
 
   const total = fileStat.size;
-  const contentType = CONTENT_TYPES[getExtension(params.name)] ?? "application/octet-stream";
-  const wantsDownload = req.nextUrl.searchParams.get("download") === "1";
-
+  const contentType = CONTENT_TYPES[getExtension(name)] ?? "application/octet-stream";
   const baseHeaders: Record<string, string> = {
     "Content-Type": contentType,
     "Accept-Ranges": "bytes",
     "Cache-Control": "no-store",
   };
-  if (wantsDownload) {
-    baseHeaders["Content-Disposition"] = `attachment; filename="${params.name}"`;
+  if (download) {
+    baseHeaders["Content-Disposition"] = `attachment; filename="${name}"`;
   }
 
   const range = req.headers.get("range");

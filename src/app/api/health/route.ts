@@ -42,6 +42,11 @@ export async function GET() {
         ? "vid.stab filters detected."
         : "vid.stab not found — rebuild ffmpeg with --enable-libvidstab to enable stabilisation.",
     },
+    backends: {
+      storage: config.storageBackend,
+      jobs: config.jobsBackend,
+      supabaseConfigured: config.supabaseReady,
+    },
     limits: { maxUploadMb: config.maxUploadMb },
   });
 }

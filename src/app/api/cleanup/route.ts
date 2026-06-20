@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/api";
-import { purgeAllStorage } from "@/lib/storage";
+import { mediaStore } from "@/lib/media";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
   if (unauthorised) return unauthorised;
 
   try {
-    const removed = await purgeAllStorage();
+    const removed = await mediaStore.purgeAll();
     return NextResponse.json({ removed });
   } catch (err) {
     // eslint-disable-next-line no-console

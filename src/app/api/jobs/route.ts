@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { nanoid } from "nanoid";
 import { requireApiAuth } from "@/lib/api";
-import { probe } from "@/lib/ffprobe";
-import { ensureStorage, fileSize, resolveInScope } from "@/lib/storage";
+import { sanitizeFilename } from "@/lib/storage";
+import { mediaStore } from "@/lib/media";
 import { getTool, withDefaults } from "@/lib/tools/catalog";
 import type { ToolId } from "@/lib/tools/types";
-import { makePlanContext, runJob } from "@/lib/jobs/runner";
+import { startJob } from "@/lib/jobs/runner";
 import { putJob, startSweeper } from "@/lib/jobs/store";
 import { toJobView, type Job } from "@/lib/jobs/types";
 
@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
   if (unauthorised) return unauthorised;
 
   try {
-    await ensureStorage();
+    await mediaStore.init();
     startSweeper();
 
     const body = (await req.json()) as CreateJobBody;
@@ -32,43 +32,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unknown tool." }, { status: 400 });
     }
 
-    const uploadName = body.upload?.name;
+    const uploadName = body.upload?.name ? sanitizeFilename(body.upload.name) : "";
     if (!uploadName) {
       return NextResponse.json({ error: "Missing upload reference." }, { status: 400 });
     }
 
-    // Resolve guards against traversal; existence check guards against bad refs.
-    const inputPath = resolveInScope("uploads", uploadName);
-    const inputBytes = await fileSize(inputPath);
+    const inputBytes = await mediaStore.size("uploads", uploadName);
     if (inputBytes <= 0) {
       return NextResponse.json({ error: "Uploaded file not found." }, { status: 404 });
     }
 
-    const info = await probe(inputPath).catch(() => null);
-    const durationSec = info?.durationSec ?? 0;
-    const hasAudio = info?.hasAudio ?? false;
-
-    const options = withDefaults(tool, body.options ?? {});
-    const id = nanoid(12);
-    const outputName = `${id}.${tool.outputExt}`;
-
     const job: Job = {
-      id,
+      id: nanoid(12),
       tool: tool.id as ToolId,
       status: "queued",
       progress: 0,
       stepLabel: "Queued",
-      options,
+      options: withDefaults(tool, body.options ?? {}),
       createdAt: Date.now(),
       updatedAt: Date.now(),
       input: { scope: "uploads", name: uploadName, bytes: inputBytes },
       outputKind: tool.outputKind,
     };
-    putJob(job);
+    await putJob(job);
 
-    const ctx = makePlanContext(job, { durationSec, hasAudio, outputName });
     // Fire-and-forget: the client polls GET /api/jobs/:id for progress.
-    void runJob(job, ctx);
+    void startJob(job);
 
     return NextResponse.json({ job: toJobView(job) }, { status: 201 });
   } catch (err) {

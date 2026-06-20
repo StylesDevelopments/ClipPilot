@@ -12,7 +12,7 @@ interface Params {
 
 /** Poll job status. */
 export async function GET(_req: NextRequest, { params }: Params) {
-  const job = getJob(params.id);
+  const job = await getJob(params.id);
   if (!job) {
     return NextResponse.json({ error: "Job not found." }, { status: 404 });
   }
@@ -24,7 +24,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const unauthorised = requireApiAuth(req);
   if (unauthorised) return unauthorised;
 
-  const job = getJob(params.id);
+  const job = await getJob(params.id);
   if (!job) {
     return NextResponse.json({ error: "Job not found." }, { status: 404 });
   }

@@ -53,26 +53,26 @@ Plus:
 
 ## 💾 Storage & architecture
 
-ClipPilot is **self-contained — there is no separate backend or external
-storage to set up.** The Next.js app *is* the backend:
+The Next.js app *is* the backend — its API route handlers accept the upload,
+spawn **FFmpeg** to process it, and serve the result. Storage and job state sit
+behind **pluggable backends, chosen by environment variables**, so the same code
+runs locally with zero setup or in the cloud:
 
-- **Server side:** Next.js **API route handlers** (running on Node) accept the
-  upload, spawn **FFmpeg** to process it, and serve the result. Job status is
-  tracked in a small **in-memory map** while a job runs.
-- **Storage:** the **local filesystem** under `STORAGE_DIR` (default
-  `./storage`): uploads in `storage/uploads`, results in `storage/outputs`,
-  scratch files in `storage/tmp`. No database, no S3, no cloud bucket.
-- **Client side:** your browser keeps only a **recent-jobs list in
-  `localStorage`** — purely for convenience, never sent anywhere.
+| Concern | Local (default) | Cloud (when Supabase is configured) |
+| --- | --- | --- |
+| **Files** | Filesystem under `STORAGE_DIR` (`uploads/`, `outputs/`, `tmp/`) | **Supabase Storage** (private bucket, served via signed URLs) |
+| **Job state** | In-memory map (single process) | **Supabase Postgres** (`public.jobs`) |
+| **Recent jobs (UI)** | Browser `localStorage` only | Browser `localStorage` only |
 
-So: **just local.** Run `npm run dev` (or `build`/`start`) and everything —
-web UI, API and processing — lives in that one process on one machine. Files are
-swept automatically after `JOB_TTL_MINUTES`, or instantly via "Delete all files".
+FFmpeg always works on real local files; with Supabase the runner downloads the
+input to a temp file, processes it, then uploads the result — so it works fine on
+ephemeral hosts like Cloud Run. Switching is automatic: set `SUPABASE_URL` +
+`SUPABASE_SERVICE_ROLE_KEY` and ClipPilot uses Supabase for both files and jobs;
+leave them unset and it's pure local. Force either explicitly with
+`STORAGE_BACKEND` / `JOBS_BACKEND` (`local` | `supabase`).
 
-When you outgrow a single box, two seams are designed for it: swap the in-memory
-store (`src/lib/jobs/store.ts`) for Redis/SQLite, and point `STORAGE_DIR` at a
-mounted volume (or adapt `src/lib/storage.ts` to object storage). Nothing else
-needs to change.
+The adapters live in `src/lib/media/` (storage) and `src/lib/jobs/` (job store);
+add another backend (S3, Redis, SQLite…) by implementing one interface.
 
 ---
 
@@ -168,6 +168,63 @@ or Caddy/Nginx in front. When exposing it publicly, set `API_TOKEN` and a sane
 
 ---
 
+## ☁️ Cloud deployment (Supabase + Google Cloud Run)
+
+This is the recommended hands-off setup: **Supabase** holds files + job state,
+and **Cloud Run** runs the FFmpeg container (scales to zero, ~free for hobby use).
+Edge Functions can't run FFmpeg, which is why the container does the heavy work.
+
+### 1. Supabase (storage + database)
+
+1. Create a project (you've got `ClipPilot` ready).
+2. **Run the migration** `supabase/migrations/0001_jobs.sql` — paste it into the
+   Supabase SQL editor, or `supabase db push` if you use the CLI. This creates
+   the `public.jobs` table (with RLS on; the server uses the service-role key).
+3. The private storage bucket (`media` by default) is **created automatically**
+   on first use — no manual step needed.
+4. Grab **Project URL** and the **service-role key** from
+   Project Settings → API.
+
+You can point local dev at Supabase by putting those in `.env.local`:
+
+```bash
+SUPABASE_URL=https://YOUR-PROJECT.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=eyJ...        # service role — server only, keep secret
+```
+
+Then `npm run dev` and check <http://localhost:3000/api/health> — `backends`
+should read `"storage":"supabase","jobs":"supabase"`.
+
+### 2. Cloud Run (processing)
+
+Store the secrets in Secret Manager, then deploy from the included Dockerfile:
+
+```bash
+# one-time
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com
+printf '%s' "$SUPABASE_URL"  | gcloud secrets create SUPABASE_URL --data-file=-
+printf '%s' "$SUPABASE_KEY"  | gcloud secrets create SUPABASE_SERVICE_ROLE_KEY --data-file=-
+
+# deploy (wraps the gcloud command with sensible flags)
+GCP_PROJECT=your-project GCP_REGION=europe-west1 ./scripts/deploy-cloudrun.sh
+```
+
+Key flags the script sets and **why they matter**:
+
+- `--no-cpu-throttling` — keeps CPU allocated after the HTTP response so the
+  background FFmpeg job actually finishes (Cloud Run otherwise pauses idle CPU).
+- `--memory 2Gi --cpu 2 --timeout 600 --concurrency 2` — sane headroom for video
+  encoding; raise the timeout for longer clips.
+- `--max-instances 3` — a cost guard rail.
+- `STORAGE_DIR=/tmp/clippilot` — Cloud Run's writable scratch space (only temp
+  working files land here; the real files live in Supabase).
+
+The command prints your public URL — open it on your phone and *Add to Home
+Screen*. Because job state is in Postgres, it works correctly even across
+multiple Cloud Run instances.
+
+---
+
 ## 🗂️ Project structure
 
 ```
@@ -184,16 +241,21 @@ src/
       health/route.ts         GET ffmpeg/vid.stab diagnostics
   components/                 Small, focused UI components
   lib/
-    config.ts                 Env-driven config
+    config.ts                 Env-driven config + backend selection
     ffmpeg.ts ffprobe.ts      Safe spawn wrappers (+ progress parsing)
     storage.ts                Paths, sanitising, path-traversal guards
+    supabase.ts               Server-side Supabase client (service role)
     validation.ts             Upload validation
     api.ts                    Optional bearer-token guard
     client.ts                 Browser-side API client
-    jobs/                     Job types, in-memory store, runner
+    media/                    Storage adapters: local ⇄ Supabase Storage
+    jobs/                     Job types + store adapters (memory ⇄ Postgres) + runner
     tools/                    Tool registry (catalog) + ffmpeg plan builders
   middleware.ts               Optional CORS
-scripts/check-ffmpeg.mjs      Preflight check
+scripts/
+  check-ffmpeg.mjs            FFmpeg preflight check
+  deploy-cloudrun.sh          One-command Cloud Run deploy
+supabase/migrations/          SQL for the jobs table
 ```
 
 ---
@@ -303,8 +365,11 @@ npm test
 
 ## 🚧 Known limitations (MVP)
 
-- The job store is **in-memory** (single process). Perfect for local/self-host;
-  swap `src/lib/jobs/store.ts` for Redis/SQLite to scale horizontally.
+- The default job store is **in-memory** (single process) — fine for
+  local/self-host. For multi-instance cloud deploys, configure **Supabase**
+  (Postgres-backed jobs) so state is shared.
+- Live job **cancellation** acts on the instance running the FFmpeg child, so it
+  is most reliable within a single instance.
 - No authentication by default (enable `API_TOKEN` to add a simple gate).
 - `vid.stab` is required for stabilisation; the other tools work without it.
 
