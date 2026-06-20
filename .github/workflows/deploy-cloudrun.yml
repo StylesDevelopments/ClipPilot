@@ -20,8 +20,20 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      DB_URL: ${{ secrets.SUPABASE_DB_URL }}
     steps:
       - uses: actions/checkout@v4
+
+      # Apply DB migrations first (no-op if SUPABASE_DB_URL isn't set).
+      - name: Apply Supabase migrations
+        if: ${{ env.DB_URL != '' }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+          for f in $(ls supabase/migrations/*.sql | sort); do
+            echo "Applying $f"; psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f"
+          done
 
       - id: auth
         uses: google-github-actions/auth@v2

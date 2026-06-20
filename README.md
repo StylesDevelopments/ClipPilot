@@ -179,9 +179,15 @@ Edge Functions can't run FFmpeg, which is why the container does the heavy work.
 ### 1. Supabase (storage + database)
 
 1. Create a project (you've got `ClipPilot` ready).
-2. **Run the migration** `supabase/migrations/0001_jobs.sql` — paste it into the
-   Supabase SQL editor, or `supabase db push` if you use the CLI. This creates
-   the `public.jobs` table (with RLS on; the server uses the service-role key).
+2. **Run the migration** `supabase/migrations/0001_jobs.sql`. Easiest options:
+   - **Automatic:** add a `SUPABASE_DB_URL` GitHub secret (Supabase → Project
+     Settings → Database → Connection string) — the included
+     `.github/workflows/supabase-migrate.yml` then applies migrations on every
+     push, and the deploy workflow applies them before deploying.
+   - **Manual:** paste the SQL into the Supabase SQL editor, or `supabase db push`.
+
+   This creates the `public.jobs` table (RLS on; the server uses the
+   service-role key). Migrations are idempotent, so re-running is safe.
 3. The private storage bucket (`media` by default) is **created automatically**
    on first use — no manual step needed.
 4. Grab **Project URL** and the **service-role key** from
