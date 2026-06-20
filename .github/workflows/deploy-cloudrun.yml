@@ -1,0 +1,63 @@
+name: Deploy to Cloud Run
+
+# Manual trigger only (Actions tab → "Deploy to Cloud Run" → Run workflow),
+# so the dev branch never auto-deploys or shows red checks before secrets exist.
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: "Cloud Run region"
+        default: "europe-west1"
+        required: true
+
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   GCP_PROJECT                  your GCP project id
+#   GCP_SA_KEY                   a service-account JSON key with Run Admin,
+#                                Cloud Build Editor, Artifact Registry Writer,
+#                                Service Account User  (or use Workload Identity)
+#   SUPABASE_URL                 your Supabase project URL
+#   SUPABASE_SERVICE_ROLE_KEY    Supabase service-role key (server only)
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Apply DB migrations first (no-op if SUPABASE_DB_URL isn't set).
+      - name: Apply Supabase migrations
+        if: ${{ env.DB_URL != '' }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+          for f in $(ls supabase/migrations/*.sql | sort); do
+            echo "Applying $f"; psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy
+        run: |
+          gcloud run deploy clippilot \
+            --project "${{ secrets.GCP_PROJECT }}" \
+            --region "${{ github.event.inputs.region }}" \
+            --source . \
+            --allow-unauthenticated \
+            --memory 2Gi --cpu 2 --timeout 600 --concurrency 2 \
+            --max-instances 3 --no-cpu-throttling \
+            --set-env-vars "STORAGE_DIR=/tmp/clippilot" \
+            --set-env-vars "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" \
+            --set-env-vars "SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
+
+      - name: Show URL
+        run: |
+          gcloud run services describe clippilot \
+            --project "${{ secrets.GCP_PROJECT }}" \
+            --region "${{ github.event.inputs.region }}" \
+            --format 'value(status.url)'

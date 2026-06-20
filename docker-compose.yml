@@ -1,0 +1,17 @@
+services:
+  clippilot:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      # Tweak to taste; all are optional.
+      MAX_UPLOAD_MB: "200"
+      JOB_TTL_MINUTES: "180"
+      # API_TOKEN: "change-me"          # uncomment to require a bearer token
+      # CORS_ORIGIN: "https://my-app"   # uncomment for cross-origin API use
+    volumes:
+      - clippilot-storage:/data/storage
+    restart: unless-stopped
+
+volumes:
+  clippilot-storage:
