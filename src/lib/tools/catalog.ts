@@ -47,9 +47,9 @@ export const TOOLS: ToolMeta[] = [
         type: "select",
         default: "balanced",
         choices: [
-          { value: "fast", label: "Fast – quicker, larger" },
-          { value: "balanced", label: "Balanced" },
-          { value: "high", label: "High – slower, smaller" },
+          { value: "fast", label: "Fast – quickest" },
+          { value: "balanced", label: "Balanced – recommended" },
+          { value: "high", label: "High – best quality (bigger file)" },
         ],
       },
       {
