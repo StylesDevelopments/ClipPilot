@@ -23,7 +23,9 @@ gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregi
 
 if [ -n "${SUPABASE_DB_URL:-}" ]; then
   echo "→ Applying database migrations…"
-  command -v psql >/dev/null 2>&1 || sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+  if ! command -v psql >/dev/null 2>&1; then
+    sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+  fi
   for f in supabase/migrations/*.sql; do
     echo "   $f"
     psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f "$f"
