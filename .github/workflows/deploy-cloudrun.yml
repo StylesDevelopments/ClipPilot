@@ -1,63 +1,57 @@
 name: Deploy to Cloud Run
 
-# Manual trigger only (Actions tab → "Deploy to Cloud Run" → Run workflow),
-# so the dev branch never auto-deploys or shows red checks before secrets exist.
+# Auto-deploys on every push to main (i.e. when you merge), plus a manual button.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      region:
-        description: "Cloud Run region"
-        default: "europe-west1"
-        required: true
 
-# Required repository secrets (Settings → Secrets and variables → Actions):
-#   GCP_PROJECT                  your GCP project id
-#   GCP_SA_KEY                   a service-account JSON key with Run Admin,
-#                                Cloud Build Editor, Artifact Registry Writer,
-#                                Service Account User  (or use Workload Identity)
-#   SUPABASE_URL                 your Supabase project URL
-#   SUPABASE_SERVICE_ROLE_KEY    Supabase service-role key (server only)
+# Required for keyless auth (Workload Identity Federation) — no service-account key.
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  REGION: europe-west1
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
+      PROJECT: ${{ secrets.GCP_PROJECT }}
+      IMAGE: europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/clippilot/clippilot:${{ github.sha }}
       DB_URL: ${{ secrets.SUPABASE_DB_URL }}
     steps:
       - uses: actions/checkout@v4
 
-      # Apply DB migrations first (no-op if SUPABASE_DB_URL isn't set).
+      # Apply DB migrations first (no-op if SUPABASE_DB_URL secret isn't set).
       - name: Apply Supabase migrations
         if: ${{ env.DB_URL != '' }}
         run: |
           set -euo pipefail
           sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
-          for f in $(ls supabase/migrations/*.sql | sort); do
-            echo "Applying $f"; psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f"
-          done
+          for f in supabase/migrations/*.sql; do echo "Applying $f"; psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f"; done
 
       - id: auth
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Deploy
+      - name: Ensure Artifact Registry repo
+        run: gcloud artifacts repositories create clippilot --repository-format=docker --location=$REGION --project=$PROJECT 2>/dev/null || true
+
+      - name: Build image from Dockerfile
+        run: gcloud builds submit --project=$PROJECT --region=$REGION --tag "$IMAGE"
+
+      - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy clippilot \
-            --project "${{ secrets.GCP_PROJECT }}" \
-            --region "${{ github.event.inputs.region }}" \
-            --source . \
-            --allow-unauthenticated \
-            --memory 2Gi --cpu 2 --timeout 600 --concurrency 2 \
+          gcloud run deploy clippilot --project=$PROJECT --region=$REGION --image "$IMAGE" \
+            --allow-unauthenticated --memory 2Gi --cpu 2 --timeout 600 --concurrency 2 \
             --max-instances 3 --no-cpu-throttling \
-            --set-env-vars "STORAGE_DIR=/tmp/clippilot" \
-            --set-env-vars "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" \
-            --set-env-vars "SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
+            --set-env-vars "STORAGE_DIR=/tmp/clippilot,MAX_UPLOAD_MB=50,SUPABASE_URL=${{ secrets.SUPABASE_URL }},SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
 
       - name: Show URL
-        run: |
-          gcloud run services describe clippilot \
-            --project "${{ secrets.GCP_PROJECT }}" \
-            --region "${{ github.event.inputs.region }}" \
-            --format 'value(status.url)'
+        run: gcloud run services describe clippilot --project=$PROJECT --region=$REGION --format='value(status.url)'
