@@ -43,10 +43,15 @@ jobs:
       - name: Ensure Artifact Registry repo
         run: gcloud artifacts repositories create clippilot --repository-format=docker --location=$REGION --project=$PROJECT 2>/dev/null || true
 
-      - name: Build image from Dockerfile
-        # --suppress-logs: the keyless deploy identity can't stream Cloud Build's
-        # default log bucket; without this gcloud errors even when the build is fine.
-        run: gcloud builds submit --project=$PROJECT --region=$REGION --tag "$IMAGE" --suppress-logs
+      - name: Configure Docker auth for Artifact Registry
+        run: gcloud auth configure-docker $REGION-docker.pkg.dev --quiet
+
+      # Build the image on the runner and push directly — avoids Cloud Build
+      # entirely (and its log-bucket streaming permission issues with WIF).
+      - name: Build & push image
+        run: |
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
 
       - name: Deploy to Cloud Run
         run: |
