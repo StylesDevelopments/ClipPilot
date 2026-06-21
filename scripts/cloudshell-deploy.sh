@@ -10,6 +10,9 @@
 #
 set -euo pipefail
 
+# Always run from the repo root, however this script was invoked.
+cd "$(dirname "$0")/.."
+
 if [ -f deploy.env ]; then
   set -a; . ./deploy.env; set +a
 fi
