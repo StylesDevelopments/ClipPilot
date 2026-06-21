@@ -26,9 +26,11 @@ export class SupabaseMediaStore implements MediaStore {
     await mkdir(config.tmpDir, { recursive: true });
     const supabase = getSupabase();
     // Create the bucket if it doesn't exist yet; ignore "already exists".
+    // No fileSizeLimit here — setting one above the project's plan limit (e.g.
+    // 50 MB on the free tier) makes creation fail. The plan's global limit and
+    // MAX_UPLOAD_MB still apply.
     const { error } = await supabase.storage.createBucket(this.bucket, {
       public: false,
-      fileSizeLimit: config.maxUploadBytes,
     });
     if (error && !/exist/i.test(error.message)) {
       // eslint-disable-next-line no-console

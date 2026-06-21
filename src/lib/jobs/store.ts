@@ -75,6 +75,10 @@ export function startSweeper(): void {
 
   const intervalMs = 5 * 60 * 1000;
   const ttlMs = config.jobTtlMinutes * 60 * 1000;
+  // A job that hasn't reported progress for this long is considered dead — e.g.
+  // the instance that was running its FFmpeg process was scaled down. Active
+  // jobs update their progress every sub-second, so this only catches corpses.
+  const staleMs = 30 * 60 * 1000;
 
   globalForJobs.__clippilotSweeper = setInterval(() => {
     void (async () => {
@@ -85,6 +89,16 @@ export function startSweeper(): void {
           job.status === "done" || job.status === "error" || job.status === "cancelled";
         if (finished && now - job.updatedAt > ttlMs) {
           await deleteJob(job.id).catch(() => {});
+          continue;
+        }
+        // Reap jobs stuck in queued/running with no recent update.
+        const active = job.status === "queued" || job.status === "running";
+        if (active && now - job.updatedAt > staleMs) {
+          await updateJob(job.id, {
+            status: "error",
+            error: "Job stopped unexpectedly (worker no longer running).",
+            stepLabel: "Failed",
+          }).catch(() => {});
         }
       }
     })();

@@ -23,6 +23,7 @@ yarn-error.log*
 .env
 .env.local
 .env*.local
+deploy.env
 
 # local storage (uploaded + processed media) — keep the folder, ignore contents
 /storage/*

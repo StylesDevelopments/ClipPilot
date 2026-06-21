@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Slash-free shortcut for mobile Cloud Shell: just run `bash deploy`.
+cd "$(dirname "$0")"
+exec bash scripts/cloudshell-deploy.sh
